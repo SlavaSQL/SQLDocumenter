@@ -137,6 +137,7 @@ Vers. | Operator            |   Date   |  Action     | Description
 01.22 | Slava Murygin       |2014-05-25| Downgrading | Refubrished script to meet SQL 2005 criterias
 01.23 | Slava Murygin       |2018-01-28| Enhancement | Added support of SQL Server 2016
 01.24 | Slava Murygin       |2022-05-22| Enhancement | Added support of SQL Server 2017-19
+01.25 | Slava Murygin       |2024-05-16| Enhancement | Replaced use of DBCC LogInfo by "dm_db_log_info" for versions 2016+
 #*******************************************************************************************************************************************************************************/
 
 SET NOCOUNT ON
@@ -158,6 +159,7 @@ DECLARE @Objects TABLE (
        Ext_Property VARCHAR(MAX),
        Reported TINYINT DEFAULT (0)
        ) ;
+DECLARE @database_id INT; /* Researched Database ID */
 DECLARE @object_id  INT; /* Stores current Object ID */
 DECLARE @SessionId CHAR(36)  ; /* Unique ID for all temp objects within the SP*/
 DECLARE @i INT; /* Usualy Counter */ 
@@ -191,8 +193,8 @@ SELECT @i = 0,
 
 /*0010 Verify if Database Exists */
 SET @CurrentStep = '0010';
-SELECT TOP 1 @i = database_id FROM master.sys.databases WHERE @DBName = name
-IF IsNull(@i,0) = 0
+SELECT TOP 1 @database_id = database_id FROM master.sys.databases WHERE @DBName = name
+IF IsNull(@database_id,0) = 0
 BEGIN
   RAISERROR('Database does not Exist',16,1)
   GOTO END_of_SCRIPT
@@ -307,7 +309,7 @@ INSERT INTO @Results(ResultRecord) VALUES
 INSERT INTO @Results(ResultRecord) VALUES 
   ('<body><Center>' +
   '<H1>Full Database Documentation</H1>' +
-  '<H2>For Database "' + @DBName + '" (Database ID = ' + CAST(@i as VARCHAR) + ' )</H2>');
+  '<H2>For Database "' + @DBName + '" (Database ID = ' + CAST(@database_id as VARCHAR) + ' )</H2>');
 
 SET @TempString = '
   SELECT TOP 1 ''<TABLE><TR><TD VALIGN="TOP"><H3>DB Description: </H3></TD><TD><H4>'' + value + ''</H4></TD></TR></TABLE>''
@@ -534,12 +536,9 @@ SET @TempString = '
     END CATCH
   END CATCH
 
-
 INSERT INTO @Results(ResultRecord) VALUES ('</TABLE>');
 
 RAISERROR ('#0021 Finished', 0, 1) WITH NOWAIT;
-
-
 
 /*0025 Collecting General Information About File Groups */
 SET @CurrentStep = '0025';
@@ -642,16 +641,19 @@ RAISERROR ('#0030 Finished', 0, 1) WITH NOWAIT;
 /*0040 Collecting General Information About Log Files */
 SET @CurrentStep = '0040';
 
-  SET @TempString = 'DBCC LogInfo(''' + @DBName + ''');'
+  SET @TempString =	CASE WHEN @ServerRelease < 130
+	THEN 'DBCC LogInfo(''' + @DBName + ''');'
+	ELSE 'SELECT 0, 0, 0, 0, 0, 0, 0 FROM sys.dm_db_log_info(' + CAST(@database_id as VARCHAR(10)) + ')' END
   IF @Debug = 1 PRINT @TempString;
 
   BEGIN TRY
-	IF @ServerVersion >= 2012
+	IF @ServerVersion = 2012
 		INSERT INTO @LogInfo(RecoveryUnitId, FileId, FileSize, StartOffset, FSeqNo, Status, Parity, CreateLSN)
 		EXEC (@TempString);
 	ELSE
 		INSERT INTO @LogInfo(FileId, FileSize, StartOffset, FSeqNo, Status, Parity, CreateLSN)
 		EXEC (@TempString);
+
 	SET @i = @@IDENTITY;
   END TRY
 
